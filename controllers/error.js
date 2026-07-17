@@ -9,6 +9,7 @@ exports.get500 = (error, req, res, next) => {
   console.log(error);
   res.status(500).render('500', {
     title: 'Unexpected Error',
-    path: null
+    path: null,
+    isAuthenticated: req.session ? req.session.isLoggedIn : false
   });
 };
