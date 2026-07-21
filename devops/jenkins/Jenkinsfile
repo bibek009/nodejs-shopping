@@ -1,0 +1,160 @@
+pipeline {
+
+    agent any
+
+    options {
+        timestamps()
+        ansiColor('xterm')
+        disableConcurrentBuilds()
+    }
+
+    environment {
+
+        APP_NAME = "nodejs-shopping"
+
+        IMAGE_NAME = "bibekbajagain/nodejs-shopping"
+
+        REGISTRY = "docker.io"
+
+        BUILD_TAG = "${BUILD_NUMBER}"
+
+        GIT_BRANCH = "dev"
+    }
+
+    stages {
+
+        stage('Checkout') {
+
+            steps {
+
+                git(
+                    branch: "${GIT_BRANCH}",
+                    credentialsId: 'github-token',
+                    url: 'https://github.com/bibek009/nodejs-shopping.git'
+                )
+
+            }
+        }
+
+        stage('Build Docker Image') {
+
+            steps {
+
+                sh """
+                docker build \
+                    -f devops/docker/Dockerfile \
+                    -t ${IMAGE_NAME}:${BUILD_TAG} \
+                    -t ${IMAGE_NAME}:latest .
+                """
+
+            }
+
+        }
+
+        stage('Login DockerHub') {
+
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub',
+                        usernameVariable: 'USER',
+                        passwordVariable: 'PASS'
+                    )
+                ]) {
+
+                    sh '''
+                    echo "$PASS" | docker login \
+                    -u "$USER" \
+                    --password-stdin
+                    '''
+
+                }
+
+            }
+
+        }
+
+        stage('Push Image') {
+
+            steps {
+
+                sh """
+                docker push ${IMAGE_NAME}:${BUILD_TAG}
+                docker push ${IMAGE_NAME}:latest
+                """
+
+            }
+
+        }
+
+        stage('Update Kubernetes Manifest') {
+
+            steps {
+
+                sh """
+                sed -i 's|image:.*|image: ${IMAGE_NAME}:${BUILD_TAG}|g' devops/k8s/deployment.yaml
+                """
+
+            }
+
+        }
+
+        stage('Commit Manifest') {
+
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-token',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+
+                    sh """
+                    git config user.email "bibekbajagain009@gmail.com"
+                    git config user.name "Jenkins"
+
+                    git add devops/k8s/deployment.yaml
+
+                    git diff --cached --quiet || git commit -m "Update image to ${BUILD_TAG}"
+
+                    git remote set-url origin https://\$GIT_USER:\$GIT_TOKEN@github.com/bibek009/nodejs-shopping.git
+
+                    git push origin ${GIT_BRANCH}
+                    """
+
+                }
+
+            }
+
+        }
+
+    }
+
+    post {
+
+        always {
+
+            sh "docker logout || true"
+
+            cleanWs()
+
+        }
+
+        success {
+
+            echo "Deployment pipeline completed successfully."
+
+        }
+
+        failure {
+
+            echo "Pipeline failed."
+
+        }
+
+    }
+
+}
